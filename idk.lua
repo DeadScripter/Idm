@@ -52,10 +52,12 @@ local function getCraterData(craters)
 
     for _, crater in ipairs(craters) do
         local root = crater:FindFirstChild("Root")
-        if root and root:FindFirstChild("name") then
-            local name = root.name.Value
-            counts[name] = (counts[name] or 0) + 1
-            table.insert(details, "- " .. name)
+        if root then
+            for _, child in ipairs(root:GetChildren()) do
+                local name = child.Name
+                counts[name] = (counts[name] or 0) + 1
+                table.insert(details, "- " .. name)
+            end
         end
     end
 
@@ -110,8 +112,6 @@ local function farmCraters()
         if crater and crater.Parent then
             if crater:FindFirstChild("Root") then
                 hrp.CFrame = crater.Root.CFrame + Vector3.new(0, 5, 0)
-            else
-                hrp.CFrame = hrp.CFrame -- fallback (stay in place)
             end
             task.wait(0.5)
             pressE()
@@ -122,45 +122,46 @@ local function farmCraters()
     return true
 end
 
--- // Server hop (fixed)
+-- // Proper server hop (different instance)
 local function serverHop()
-    local gameId = game.PlaceId
-    local cursor = ""
-    while true do
-        local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100%s"):format(
-            gameId,
-            cursor ~= "" and "&cursor=" .. cursor or ""
-        )
-        local success, result = pcall(function()
-            return HttpService:JSONDecode(game:HttpGet(url))
-        end)
+    local req = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or request
+    if not req then
+        TeleportService:Teleport(game.PlaceId, localPlayer)
+        return
+    end
 
-        if success and result and result.data then
-            for _, server in ipairs(result.data) do
-                if server.playing < server.maxPlayers then
-                    TeleportService:TeleportToPlaceInstance(gameId, server.id, localPlayer)
+    local servers = {}
+    local body = req({
+        Url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(game.PlaceId),
+        Method = "GET"
+    })
+
+    if body and body.Body then
+        local data = HttpService:JSONDecode(body.Body)
+        if data and data.data then
+            for _, server in ipairs(data.data) do
+                if server.playing < server.maxPlayers and server.id ~= game.JobId then
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, localPlayer)
                     return
                 end
             end
-            if result.nextPageCursor then
-                cursor = result.nextPageCursor
-            else
-                cursor = ""
-            end
         end
-        task.wait(2)
     end
+
+    -- fallback if no server found
+    TeleportService:Teleport(game.PlaceId, localPlayer)
 end
 
 -- // Main
 task.spawn(function()
     local character = waitForCharacter()
-    spamM1() -- do M1 spam before farming loop
+    spamM1()
 end)
 
 while task.wait(2) do
     local success = farmCraters()
     if not success then
+        task.wait(5)
         serverHop()
     end
 end
